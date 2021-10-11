@@ -80,8 +80,12 @@ function s:URI(scheme, authority, path, query, fragment)
         return s:URI(l:scheme, l:authority, l:path, l:query, l:fragment)
     endfunction
 
-    function l:uri.format() dict
-        return s:asFormatted(self)
+    function l:uri.toString(skipEncoding = v:false) dict
+        if !a:skipEncoding
+            return s:asFormatted(self, v:false)
+        else
+            return s:asFormatted(self, v:true)
+        endif
     endfunction
 
     return l:uri
@@ -92,7 +96,7 @@ function s:parse(value)
     if empty(l:matched)
         return s:URI('', '', '', '', '')
     else
-        return s:URI(l:matched[2], s:decodeURIComponent(l:matched[4]), s:decodeURIComponent(l:matched[5]), s:decodeURIComponent(l:matched[7]), s:decodeURIComponent(l:matched[9]))
+        return s:URI(l:matched[2], s:percentDecode(l:matched[4]), s:percentDecode(l:matched[5]), s:percentDecode(l:matched[7]), s:percentDecode(l:matched[9]))
     endif
 endfunction
 
@@ -127,58 +131,6 @@ function s:uriToFsPath(uri)
     return l:value
 endfunction
 
-function s:asFormatted(uri)
-    let l:result = ''
-    let l:scheme = a:uri.scheme
-    let l:authority = a:uri.authority
-    let l:path = a:uri.path
-    let l:query = a:uri.query
-    let l:fragment = a:uri.fragment
-    if !empty(l:scheme)
-        let l:result = l:result . l:scheme
-        let l:result = l:result . ':'
-    endif
-    if !empty(l:authority) || l:scheme == 'file'
-        let l:result = l:result . '//'
-    endif
-    if !empty(l:authority)
-        let l:idx = stridx(l:authority, '@')
-        if l:idx != -1
-            let l:userinfo = slice(l:authority, 0, l:idx)
-            let l:authority = slice(l:authority, l:idx + 1)
-            let l:idx = stridx(l:userinfo, ':')
-            if l:idx == -1
-                let l:result = l:result . s:encodeURIComponentFast(l:userinfo, v:false)
-            else
-                let l:result = l:result . s:encodeURIComponentFast(slice(l:userinfo, 0, l:idx), v:false)
-                let l:result = l:result . ':'
-                let l:result = l:result . s:encodeURIComponentFast(slice(l:userinfo, l:idx + 1), v:false)
-            endif
-            let l:result = l:result . '@'
-        endif
-        let l:authority = tolower(l:authority)
-        let l:idx = stridx(l:authority, ':')
-        if l:idx == -1
-            let l:result = l:result . s:encodeURIComponentFast(l:authority, v:false)
-        else
-            let l:result = l:result . s:encodeURIComponentFast(slice(l:authority, 0, l:idx), v:false)
-            let l:result = l:result . slice(l:authority, l:idx)
-        endif
-    endif
-    if !empty(l:path)
-        let l:result = l:result . s:encodeURIComponentFast(l:path, v:true)
-    endif
-    if !empty(l:query)
-        let l:result = l:result . '?'
-        let l:result = l:result . s:encodeURIComponentFast(l:query, v:false)
-    endif
-    if !empty(l:fragment)
-        let l:result = l:result . '#'
-        let l:result = l:result . s:encodeURIComponentFast(l:fragment, v:false)
-    endif
-    return l:result
-endfunction
-
 function s:referenceResolution(scheme, path)
     let l:path = a:path
     if a:scheme == 'https' || a:scheme == 'http' || a:scheme == 'file'
@@ -202,7 +154,6 @@ function s:encodeURIComponentFast(uriComponent, allowSlash)
                 let l:nativeEncodePos = -1
             endif
             if !empty(l:result)
-                " let l:result = l:result . a:uriComponent[l:pos]
                 let l:result = l:result . slice(a:uriComponent, l:pos, l:pos + 1)
             endif
         else
@@ -228,6 +179,110 @@ function s:encodeURIComponentFast(uriComponent, allowSlash)
     else
         return l:result
     endif
+endfunction
+
+function s:encodeURIComponentMinimal(path, ...)
+    let l:result = ''
+    for l:pos in range(strchars(a:path))
+        let l:code = strcharpart(a:path, l:pos, 1)
+        if l:code == '#' || l:code == '?'
+            if empty(l:result)
+                let l:result = slice(a:path, 0, l:pos)
+            endif
+            let l:result = l:result . s:encodeURIComponent(l:code)
+        else
+            if !empty(l:result)
+                let l:result = l:result . strcharpart(a:path, l:pos, 1)
+            endif
+        endif
+    endfor
+    if empty(l:result)
+        return a:path
+    else
+        return l:result
+    endif
+endfunction
+
+function s:asFormatted(uri, skipEncoding)
+    if !a:skipEncoding
+        let s:encoder = funcref('s:encodeURIComponentFast')
+    else
+        let s:encoder = funcref('s:encodeURIComponentMinimal')
+    endif
+        let l:result = ''
+    let l:scheme = a:uri.scheme
+    let l:authority = a:uri.authority
+    let l:path = a:uri.path
+    let l:query = a:uri.query
+    let l:fragment = a:uri.fragment
+    if !empty(l:scheme)
+        let l:result = l:result . l:scheme
+        let l:result = l:result . ':'
+    endif
+    if !empty(l:authority) || l:scheme == 'file'
+        let l:result = l:result . '//'
+    endif
+    if !empty(l:authority)
+        let l:idx = stridx(l:authority, '@')
+        if l:idx != -1
+            let l:userinfo = slice(l:authority, 0, l:idx)
+            let l:authority = slice(l:authority, l:idx + 1)
+            let l:idx = stridx(l:userinfo, ':')
+            if l:idx == -1
+                let l:result = l:result . s:encoder(l:userinfo, v:false)
+            else
+                let l:result = l:result . s:encoder(slice(l:userinfo, 0, l:idx), v:false)
+                let l:result = l:result . ':'
+                let l:result = l:result . s:encoder(slice(l:userinfo, l:idx + 1), v:false)
+            endif
+            let l:result = l:result . '@'
+        endif
+        let l:authority = tolower(l:authority)
+        let l:idx = stridx(l:authority, ':')
+        if l:idx == -1
+            let l:result = l:result . s:encoder(l:authority, v:false)
+        else
+            let l:result = l:result . s:encoder(slice(l:authority, 0, l:idx), v:false)
+            let l:result = l:result . slice(l:authority, l:idx)
+        endif
+    endif
+    if !empty(l:path)
+        let l:result = l:result . s:encoder(l:path, v:true)
+    endif
+    if !empty(l:query)
+        let l:result = l:result . '?'
+       let l:result = l:result . s:encoder(l:query, v:false)
+    endif
+    if !empty(l:fragment)
+        let l:result = l:result . '#'
+        if !a:skipEncoding
+            let l:result = l:result . s:encodeURIComponentFast(l:fragment, v:false)
+        else
+            let l:result = l:result . l:fragment
+        endif
+    endif
+    return l:result
+endfunction
+
+function s:decodeURIComponentGraceful(str)
+    try
+        return s:decodeURIComponent(a:str)
+    catch
+        if strchars(a:str) > 3
+            return slice(a:str, 0, 3) . s:decodeURIComponentGraceful(slice(a:str, 3))
+        else
+            return a:str
+        endif
+    endtry
+endfunction
+
+const s:encodedAsHex = '\(%[0-9A-Fa-f][0-9A-Fa-f]\)\+'
+
+function s:percentDecode(str)
+    if match(a:str, s:encodedAsHex) == -1
+        return a:str
+    endif
+    return substitute(a:str, s:encodedAsHex, {m -> s:decodeURIComponentGraceful(m[0])}, 'g')
 endfunction
 
 
